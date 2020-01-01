@@ -16,18 +16,12 @@ import os
 
 import setuptools
 
-BASE_DIR = os.path.dirname(__file__)
-VERSION_FILENAME = os.path.join(
-    BASE_DIR, "src", "opentelemetry", "util", "version.py"
-)
-PACKAGE_INFO = {}
-with open(VERSION_FILENAME) as f:
-    exec(f.read(), PACKAGE_INFO)
-
 setuptools.setup(
     name="opentelemetry-api",
-    version=PACKAGE_INFO["__version__"],
+    vcver={"path": os.path.dirname(os.path.dirname(__file__))},
+    # use_scm_version={"root": os.pardir, "relative_to": __file__},
     author="OpenTelemetry Authors",
+    setup_requires=["vcver"],
     author_email="cncf-opentelemetry-contributors@lists.cncf.io",
     classifiers=[
         "Development Status :: 3 - Alpha",

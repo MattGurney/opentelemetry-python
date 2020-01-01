@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
-
 import setuptools
 
-BASE_DIR = os.path.dirname(__file__)
-VERSION_FILENAME = os.path.join(
-    BASE_DIR, "src", "opentelemetry", "ext", "flask", "version.py"
+setuptools.setup(
+    use_scm_version={
+        "root": os.path.join(os.pardir, os.pardir),
+        "relative_to": __file__,
+    },
 )
-PACKAGE_INFO = {}
-with open(VERSION_FILENAME) as f:
-    exec(f.read(), PACKAGE_INFO)
-
-setuptools.setup(version=PACKAGE_INFO["__version__"])

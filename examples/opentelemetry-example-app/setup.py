@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import setuptools
 
 setuptools.setup(
     name="opentelemetry-example-app",
-    version="0.4.dev0",
+    use_scm_version={
+        "root": os.path.join(os.pardir, os.pardir),
+        "relative_to": __file__,
+    },
     author="OpenTelemetry Authors",
     author_email="cncf-opentelemetry-contributors@lists.cncf.io",
     classifiers=[
