@@ -1,4 +1,4 @@
-# Copyright 2019, OpenTelemetry Authors
+# Copyright 2020, OpenTelemetry Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ from typing import Dict, Sequence, Tuple, Type
 from opentelemetry import metrics as metrics_api
 from opentelemetry.sdk.metrics.export.aggregate import Aggregator
 from opentelemetry.sdk.metrics.export.batcher import Batcher, UngroupedBatcher
+from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
 from opentelemetry.util import time_ns
 
 logger = logging.getLogger(__name__)
@@ -99,13 +100,6 @@ class CounterHandle(metrics_api.CounterHandle, BaseHandle):
             self.update(value)
 
 
-class GaugeHandle(metrics_api.GaugeHandle, BaseHandle):
-    def set(self, value: metrics_api.ValueT) -> None:
-        """See `opentelemetry.metrics.GaugeHandle.set`."""
-        if self._validate_update(value):
-            self.update(value)
-
-
 class MeasureHandle(metrics_api.MeasureHandle, BaseHandle):
     def record(self, value: metrics_api.ValueT) -> None:
         """See `opentelemetry.metrics.MeasureHandle.record`."""
@@ -157,7 +151,7 @@ class Metric(metrics_api.Metric):
         return handle
 
     def __repr__(self):
-        return '{}(name="{}", description={})'.format(
+        return '{}(name="{}", description="{}")'.format(
             type(self).__name__, self.name, self.description
         )
 
@@ -197,39 +191,6 @@ class Counter(Metric, metrics_api.Counter):
     UPDATE_FUNCTION = add
 
 
-class Gauge(Metric, metrics_api.Gauge):
-    """See `opentelemetry.metrics.Gauge`.
-    """
-
-    HANDLE_TYPE = GaugeHandle
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        unit: str,
-        value_type: Type[metrics_api.ValueT],
-        meter: "Meter",
-        label_keys: Sequence[str] = (),
-        enabled: bool = True,
-    ):
-        super().__init__(
-            name,
-            description,
-            unit,
-            value_type,
-            meter,
-            label_keys=label_keys,
-            enabled=enabled,
-        )
-
-    def set(self, value: metrics_api.ValueT, label_set: LabelSet) -> None:
-        """See `opentelemetry.metrics.Gauge.set`."""
-        self.get_handle(label_set).set(value)
-
-    UPDATE_FUNCTION = set
-
-
 class Measure(Metric, metrics_api.Measure):
     """See `opentelemetry.metrics.Measure`."""
 
@@ -242,11 +203,73 @@ class Measure(Metric, metrics_api.Measure):
     UPDATE_FUNCTION = record
 
 
+class Observer(metrics_api.Observer):
+    """See `opentelemetry.metrics.Observer`."""
+
+    def __init__(
+        self,
+        callback: metrics_api.ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        meter: "Meter",
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ):
+        self.callback = callback
+        self.name = name
+        self.description = description
+        self.unit = unit
+        self.value_type = value_type
+        self.meter = meter
+        self.label_keys = label_keys
+        self.enabled = enabled
+
+        self.aggregators = {}
+
+    def observe(self, value: metrics_api.ValueT, label_set: LabelSet) -> None:
+        if not self.enabled:
+            return
+        if not isinstance(value, self.value_type):
+            logger.warning(
+                "Invalid value passed for %s.", self.value_type.__name__
+            )
+            return
+
+        if label_set not in self.aggregators:
+            # TODO: how to cleanup aggregators?
+            self.aggregators[label_set] = self.meter.batcher.aggregator_for(
+                self.__class__
+            )
+        aggregator = self.aggregators[label_set]
+        aggregator.update(value)
+
+    def run(self) -> bool:
+        try:
+            self.callback(self)
+        # pylint: disable=broad-except
+        except Exception as exc:
+            logger.warning(
+                "Exception while executing observer callback: %s.", exc
+            )
+            return False
+        return True
+
+    def __repr__(self):
+        return '{}(name="{}", description="{}")'.format(
+            type(self).__name__, self.name, self.description
+        )
+
+
 class Record:
     """Container class used for processing in the `Batcher`"""
 
     def __init__(
-        self, metric: Metric, label_set: LabelSet, aggregator: Aggregator
+        self,
+        metric: metrics_api.MetricT,
+        label_set: LabelSet,
+        aggregator: Aggregator,
     ):
         self.metric = metric
         self.label_set = label_set
@@ -261,12 +284,17 @@ class Meter(metrics_api.Meter):
     """See `opentelemetry.metrics.Meter`.
 
     Args:
-        batcher: The `Batcher` used for this meter.
+        instrumentation_info: The `InstrumentationInfo` for this meter.
+        stateful: Indicates whether the meter is stateful.
     """
 
-    def __init__(self, batcher: Batcher = UngroupedBatcher(True)):
-        self.batcher = batcher
+    def __init__(
+        self, instrumentation_info: "InstrumentationInfo", stateful: bool,
+    ):
+        self.instrumentation_info = instrumentation_info
         self.metrics = set()
+        self.observers = set()
+        self.batcher = UngroupedBatcher(stateful)
 
     def collect(self) -> None:
         """Collects all the metrics created with this `Meter` for export.
@@ -275,6 +303,11 @@ class Meter(metrics_api.Meter):
         each aggregator belonging to the metrics that were created with this
         meter instance.
         """
+
+        self._collect_metrics()
+        self._collect_observers()
+
+    def _collect_metrics(self) -> None:
         for metric in self.metrics:
             if metric.enabled:
                 for label_set, handle in metric.handles.items():
@@ -283,6 +316,19 @@ class Meter(metrics_api.Meter):
                     # Checkpoints the current aggregators
                     # Applies different batching logic based on type of batcher
                     self.batcher.process(record)
+
+    def _collect_observers(self) -> None:
+        for observer in self.observers:
+            if not observer.enabled:
+                continue
+
+            # TODO: capture timestamp?
+            if not observer.run():
+                continue
+
+            for label_set, aggregator in observer.aggregators.items():
+                record = Record(observer, label_set, aggregator)
+                self.batcher.process(record)
 
     def record_batch(
         self,
@@ -317,6 +363,29 @@ class Meter(metrics_api.Meter):
         self.metrics.add(metric)
         return metric
 
+    def register_observer(
+        self,
+        callback: metrics_api.ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[metrics_api.ValueT],
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ) -> metrics_api.Observer:
+        ob = Observer(
+            callback,
+            name,
+            description,
+            unit,
+            value_type,
+            self,
+            label_keys,
+            enabled,
+        )
+        self.observers.add(ob)
+        return ob
+
     def get_label_set(self, labels: Dict[str, str]):
         """See `opentelemetry.metrics.Meter.create_metric`.
 
@@ -328,3 +397,20 @@ class Meter(metrics_api.Meter):
         if len(labels) == 0:
             return EMPTY_LABEL_SET
         return LabelSet(labels=labels)
+
+
+class MeterProvider(metrics_api.MeterProvider):
+    def get_meter(
+        self,
+        instrumenting_module_name: str,
+        stateful=True,
+        instrumenting_library_version: str = "",
+    ) -> "metrics_api.Meter":
+        if not instrumenting_module_name:  # Reject empty strings too.
+            raise ValueError("get_meter called with missing module name.")
+        return Meter(
+            InstrumentationInfo(
+                instrumenting_module_name, instrumenting_library_version
+            ),
+            stateful=stateful,
+        )
