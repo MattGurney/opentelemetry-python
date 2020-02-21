@@ -18,6 +18,7 @@ import logging
 import random
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from numbers import Number
 from types import TracebackType
 from typing import Iterator, Optional, Sequence, Tuple, Type
@@ -26,10 +27,13 @@ from opentelemetry import context as context_api
 from opentelemetry import trace as trace_api
 from opentelemetry.sdk import util
 from opentelemetry.sdk.util import BoundedDict, BoundedList
+from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
 from opentelemetry.trace import SpanContext, sampling
 from opentelemetry.trace.propagation import SPAN_KEY
 from opentelemetry.trace.status import Status, StatusCanonicalCode
 from opentelemetry.util import time_ns, types
+
+CURRENT_SPANS: ContextVar[dict] = ContextVar("spans", default={})
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +47,7 @@ class SpanProcessor:
     invocations.
 
     Span processors can be registered directly using
-    :func:`TracerSource.add_span_processor` and they are invoked
+    :func:`TracerProvider.add_span_processor` and they are invoked
     in the same order as they were registered.
     """
 
@@ -142,7 +146,7 @@ class Span(trace_api.Span):
     def __init__(
         self,
         name: str,
-        context: trace_api.SpanContext,
+        context: trace_api.SpanContext = trace_api.INVALID_SPAN_CONTEXT,
         parent: trace_api.ParentSpan = None,
         sampler: Optional[sampling.Sampler] = None,
         trace_config: None = None,  # TODO
@@ -152,7 +156,7 @@ class Span(trace_api.Span):
         links: Sequence[trace_api.Link] = (),
         kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
         span_processor: SpanProcessor = SpanProcessor(),
-        instrumentation_info: "InstrumentationInfo" = None,
+        instrumentation_info: InstrumentationInfo = None,
         set_status_on_exception: bool = True,
     ) -> None:
 
@@ -309,8 +313,6 @@ class Span(trace_api.Span):
         with self._lock:
             if not self.is_recording_events():
                 return
-            if self.start_time is None:
-                raise RuntimeError("Calling end() on a not started span.")
             has_ended = self.end_time is not None
             if not has_ended:
                 if self.status is None:
@@ -385,46 +387,6 @@ def generate_trace_id() -> int:
     return random.getrandbits(128)
 
 
-class InstrumentationInfo:
-    """Immutable information about an instrumentation library module.
-
-    See `TracerSource.get_tracer` for the meaning of the properties.
-    """
-
-    __slots__ = ("_name", "_version")
-
-    def __init__(self, name: str, version: str):
-        self._name = name
-        self._version = version
-
-    def __repr__(self):
-        return "{}({}, {})".format(
-            type(self).__name__, self._name, self._version
-        )
-
-    def __hash__(self):
-        return hash((self._name, self._version))
-
-    def __eq__(self, value):
-        return type(value) is type(self) and (self._name, self._version) == (
-            value._name,
-            value._version,
-        )
-
-    def __lt__(self, value):
-        if type(value) is not type(self):
-            return NotImplemented
-        return (self._name, self._version) < (value._name, value._version)
-
-    @property
-    def version(self) -> str:
-        return self._version
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-
 class Tracer(trace_api.Tracer):
     """See `opentelemetry.trace.Tracer`.
 
@@ -435,14 +397,16 @@ class Tracer(trace_api.Tracer):
     """
 
     def __init__(
-        self, source: "TracerSource", instrumentation_info: InstrumentationInfo
+        self,
+        source: "TracerProvider",
+        instrumentation_info: InstrumentationInfo,
     ) -> None:
         self.source = source
         self.instrumentation_info = instrumentation_info
 
     def get_current_span(self):
         """See `opentelemetry.trace.Tracer.get_current_span`."""
-        return self.source.get_current_span()
+        return self.source.get_current_span(self.instrumentation_info.name)
 
     def start_as_current_span(
         self,
@@ -484,15 +448,15 @@ class Tracer(trace_api.Tracer):
         if parent_context is None or not parent_context.is_valid():
             parent = parent_context = None
             trace_id = generate_trace_id()
-            trace_options = None
+            trace_flags = None
             trace_state = None
         else:
             trace_id = parent_context.trace_id
-            trace_options = parent_context.trace_options
+            trace_flags = parent_context.trace_flags
             trace_state = parent_context.trace_state
 
         context = trace_api.SpanContext(
-            trace_id, generate_span_id(), trace_options, trace_state
+            trace_id, generate_span_id(), trace_flags, trace_state
         )
 
         # The sampler decides whether to create a real or no-op span at the
@@ -510,8 +474,8 @@ class Tracer(trace_api.Tracer):
         )
 
         if sampling_decision.sampled:
-            options = context.trace_options | trace_api.TraceOptions.SAMPLED
-            context.trace_options = trace_api.TraceOptions(options)
+            options = context.trace_flags | trace_api.TraceFlags.SAMPLED
+            context.trace_flags = trace_api.TraceFlags(options)
             if attributes is None:
                 span_attributes = sampling_decision.attributes
             else:
@@ -540,13 +504,13 @@ class Tracer(trace_api.Tracer):
         self, span: trace_api.Span, end_on_exit: bool = False
     ) -> Iterator[trace_api.Span]:
         """See `opentelemetry.trace.Tracer.use_span`."""
+        name = self.instrumentation_info.name
         try:
-            context_snapshot = context_api.get_current()
-            context_api.set_current(context_api.set_value(SPAN_KEY, span))
+            CURRENT_SPANS.get()[f"{SPAN_KEY}.{name}"] = span
             try:
                 yield span
             finally:
-                context_api.set_current(context_snapshot)
+                CURRENT_SPANS.get()[f"{SPAN_KEY}.{name}"] = None
 
         except Exception as error:  # pylint: disable=broad-except
             if (
@@ -569,7 +533,7 @@ class Tracer(trace_api.Tracer):
                 span.end()
 
 
-class TracerSource(trace_api.TracerSource):
+class TracerProvider(trace_api.TracerProvider):
     def __init__(
         self,
         sampler: sampling.Sampler = trace_api.sampling.ALWAYS_ON,
@@ -597,11 +561,11 @@ class TracerSource(trace_api.TracerSource):
         )
 
     @staticmethod
-    def get_current_span() -> Span:
-        return context_api.get_value(SPAN_KEY)  # type: ignore
+    def get_current_span(name: str) -> Span:
+        return CURRENT_SPANS.get().get(f"{SPAN_KEY}.{name}")  # type: ignore
 
     def add_span_processor(self, span_processor: SpanProcessor) -> None:
-        """Registers a new :class:`SpanProcessor` for this `TracerSource`.
+        """Registers a new :class:`SpanProcessor` for this `TracerProvider`.
 
         The span processors are invoked in the same order they are registered.
         """

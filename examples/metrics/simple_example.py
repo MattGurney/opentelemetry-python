@@ -1,4 +1,4 @@
-# Copyright 2019, OpenTelemetry Authors
+# Copyright 2020, OpenTelemetry Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,9 +23,8 @@ import sys
 import time
 
 from opentelemetry import metrics
-from opentelemetry.sdk.metrics import Counter, Measure, Meter
+from opentelemetry.sdk.metrics import Counter, Measure, MeterProvider
 from opentelemetry.sdk.metrics.export import ConsoleMetricsExporter
-from opentelemetry.sdk.metrics.export.batcher import UngroupedBatcher
 from opentelemetry.sdk.metrics.export.controller import PushController
 
 batcher_mode = "stateful"
@@ -44,18 +43,15 @@ if len(sys.argv) >= 2:
         usage(sys.argv)
         sys.exit(1)
 
-# Batcher used to collect all created metrics from meter ready for exporting
-# Pass in True/False to indicate whether the batcher is stateful.
-# True indicates the batcher computes checkpoints from over the process
-# lifetime.
-# False indicates the batcher computes checkpoints which describe the updates
-# of a single collection period (deltas)
-batcher = UngroupedBatcher(batcher_mode == "stateful")
-
-# If a batcher is not provided, a default batcher is used
 # Meter is responsible for creating and recording metrics
-metrics.set_preferred_meter_implementation(lambda _: Meter(batcher))
-meter = metrics.meter()
+metrics.set_preferred_meter_provider_implementation(lambda _: MeterProvider())
+
+# Meter's namespace corresponds to the string passed as the first argument Pass
+# in True/False to indicate whether the batcher is stateful. True indicates the
+# batcher computes checkpoints from over the process lifetime. False indicates
+# the batcher computes checkpoints which describe the updates of a single
+# collection period (deltas)
+meter = metrics.get_meter(__name__, batcher_mode == "stateful")
 
 # Exporter to export metrics to the console
 exporter = ConsoleMetricsExporter()
@@ -66,15 +62,30 @@ controller = PushController(meter, exporter, 5)
 
 # Metric instruments allow to capture measurements
 requests_counter = meter.create_metric(
-    "requests", "number of requests", 1, int, Counter, ("environment",)
+    name="requests",
+    description="number of requests",
+    unit="1",
+    value_type=int,
+    metric_type=Counter,
+    label_keys=("environment",),
 )
 
 clicks_counter = meter.create_metric(
-    "clicks", "number of clicks", 1, int, Counter, ("environment",)
+    name="clicks",
+    description="number of clicks",
+    unit="1",
+    value_type=int,
+    metric_type=Counter,
+    label_keys=("environment",),
 )
 
 requests_size = meter.create_metric(
-    "requests_size", "size of requests", 1, int, Measure, ("environment",)
+    name="requests_size",
+    description="size of requests",
+    unit="1",
+    value_type=int,
+    metric_type=Measure,
+    label_keys=("environment",),
 )
 
 # Labelsets are used to identify key-values that are associated with a specific
@@ -86,21 +97,15 @@ testing_label_set = meter.get_label_set({"environment": "testing"})
 # Update the metric instruments using the direct calling convention
 requests_size.record(100, staging_label_set)
 requests_counter.add(25, staging_label_set)
-# Sleep for 5 seconds, exported value should be 25
 time.sleep(5)
 
 requests_size.record(5000, staging_label_set)
 requests_counter.add(50, staging_label_set)
-# Exported value should be 75
 time.sleep(5)
 
 requests_size.record(2, testing_label_set)
 requests_counter.add(35, testing_label_set)
-# There should be two exported values 75 and 35, one for each labelset
 time.sleep(5)
 
 clicks_counter.add(5, staging_label_set)
-# There should be three exported values, labelsets can be reused for different
-# metrics but will be recorded seperately, 75, 35 and 5
-
 time.sleep(5)
