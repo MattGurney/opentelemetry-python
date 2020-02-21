@@ -1,4 +1,4 @@
-# Copyright 2019, OpenTelemetry Authors
+# Copyright 2020, OpenTelemetry Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,9 +27,12 @@ See the `metrics api`_ spec for terminology and context clarification.
 
 """
 import abc
+import logging
 from typing import Callable, Dict, Optional, Sequence, Tuple, Type, TypeVar
 
 from opentelemetry.util import loader
+
+logger = logging.getLogger(__name__)
 
 ValueT = TypeVar("ValueT", int, float)
 
@@ -47,13 +50,6 @@ class DefaultMetricHandle:
             value: The value to add to the handle.
         """
 
-    def set(self, value: ValueT) -> None:
-        """No-op implementation of `GaugeHandle` set.
-
-        Args:
-            value: The value to set to the handle.
-        """
-
     def record(self, value: ValueT) -> None:
         """No-op implementation of `MeasureHandle` record.
 
@@ -68,15 +64,6 @@ class CounterHandle:
 
         Args:
             value: The value to add to the handle.
-        """
-
-
-class GaugeHandle:
-    def set(self, value: ValueT) -> None:
-        """Sets the current value of the handle to ``value``.
-
-        Args:
-            value: The value to set to the handle.
         """
 
 
@@ -121,7 +108,7 @@ class Metric(abc.ABC):
 
         Handles are useful to reduce the cost of repeatedly recording a metric
         with a pre-defined set of label values. All metric kinds (counter,
-        gauge, measure) support declaring a set of required label keys. The
+        measure) support declaring a set of required label keys. The
         values corresponding to these keys should be specified in every handle.
         "Unspecified" label values, in cases where a handle is requested but
         a value was not provided are permitted.
@@ -150,14 +137,6 @@ class DefaultMetric(Metric):
             label_set: `LabelSet` to associate with the returned handle.
         """
 
-    def set(self, value: ValueT, label_set: LabelSet) -> None:
-        """No-op implementation of `Gauge` set.
-
-        Args:
-            value: The value to set the gauge metric to.
-            label_set: `LabelSet` to associate with the returned handle.
-        """
-
     def record(self, value: ValueT, label_set: LabelSet) -> None:
         """No-op implementation of `Measure` record.
 
@@ -183,28 +162,6 @@ class Counter(Metric):
         """
 
 
-class Gauge(Metric):
-    """A gauge type metric that expresses a pre-calculated value.
-
-    Gauge metrics have a value that is either ``Set`` by explicit
-    instrumentation or observed through a callback. This kind of metric
-    should be used when the metric cannot be expressed as a sum or because
-    the measurement interval is arbitrary.
-    """
-
-    def get_handle(self, label_set: LabelSet) -> "GaugeHandle":
-        """Gets a `GaugeHandle`."""
-        return GaugeHandle()
-
-    def set(self, value: ValueT, label_set: LabelSet) -> None:
-        """Sets the value of the gauge to ``value``.
-
-        Args:
-            value: The value to set the gauge metric to.
-            label_set: `LabelSet` to associate with the returned handle.
-        """
-
-
 class Measure(Metric):
     """A measure type metric that represent raw stats that are recorded.
 
@@ -224,15 +181,97 @@ class Measure(Metric):
         """
 
 
-MetricT = TypeVar("MetricT", Counter, Gauge, Measure)
+class Observer(abc.ABC):
+    """An observer type metric instrument used to capture a current set of values.
+
+
+    Observer instruments are asynchronous, a callback is invoked with the
+    observer instrument as argument allowing the user to capture multiple
+    values per collection interval.
+    """
+
+    @abc.abstractmethod
+    def observe(self, value: ValueT, label_set: LabelSet) -> None:
+        """Captures ``value`` to the observer.
+
+        Args:
+            value: The value to capture to this observer metric.
+            label_set: `LabelSet` associated to ``value``.
+        """
+
+
+class DefaultObserver(Observer):
+    """No-op implementation of ``Observer``."""
+
+    def observe(self, value: ValueT, label_set: LabelSet) -> None:
+        """Captures ``value`` to the observer.
+
+        Args:
+            value: The value to capture to this observer metric.
+            label_set: `LabelSet` associated to ``value``.
+        """
+
+
+class MeterProvider(abc.ABC):
+    @abc.abstractmethod
+    def get_meter(
+        self,
+        instrumenting_module_name: str,
+        stateful: bool = True,
+        instrumenting_library_version: str = "",
+    ) -> "Meter":
+        """Returns a `Meter` for use by the given instrumentation library.
+
+        This function may return different `Meter` types (e.g. a no-op meter
+        vs. a functional meter).
+
+        Args:
+            instrumenting_module_name: The name of the instrumenting module
+                (usually just ``__name__``).
+
+                This should *not* be the name of the module that is
+                instrumented but the name of the module doing the instrumentation.
+                E.g., instead of ``"requests"``, use
+                ``"opentelemetry.ext.http_requests"``.
+
+            stateful: True/False to indicate whether the meter will be
+                    stateful. True indicates the meter computes checkpoints
+                    from over the process lifetime. False indicates the meter
+                    computes checkpoints which describe the updates of a single
+                    collection period (deltas).
+
+            instrumenting_library_version: Optional. The version string of the
+                instrumenting library.  Usually this should be the same as
+                ``pkg_resources.get_distribution(instrumenting_library_name).version``.
+        """
+
+
+class DefaultMeterProvider(MeterProvider):
+    """The default MeterProvider, used when no implementation is available.
+
+    All operations are no-op.
+    """
+
+    def get_meter(
+        self,
+        instrumenting_module_name: str,
+        stateful: bool = True,
+        instrumenting_library_version: str = "",
+    ) -> "Meter":
+        # pylint:disable=no-self-use,unused-argument
+        return DefaultMeter()
+
+
+MetricT = TypeVar("MetricT", Counter, Measure, Observer)
+ObserverCallbackT = Callable[[Observer], None]
 
 
 # pylint: disable=unused-argument
 class Meter(abc.ABC):
     """An interface to allow the recording of metrics.
 
-    `Metric` s are used for recording pre-defined aggregation (gauge and
-    counter), or raw values (measure) in which the aggregation and labels
+    `Metric` s are used for recording pre-defined aggregation (counter),
+    or raw values (measure) in which the aggregation and labels
     for the exported metric are deferred.
     """
 
@@ -272,12 +311,39 @@ class Meter(abc.ABC):
         Args:
             name: The name of the metric.
             description: Human-readable description of the metric.
-            unit: Unit of the metric values.
+            unit: Unit of the metric values following the UCUM convention
+                (https://unitsofmeasure.org/ucum.html).
             value_type: The type of values being recorded by the metric.
             metric_type: The type of metric being created.
             label_keys: The keys for the labels with dynamic values.
             enabled: Whether to report the metric by default.
         Returns: A new ``metric_type`` metric with values of ``value_type``.
+        """
+
+    @abc.abstractmethod
+    def register_observer(
+        self,
+        callback: ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[ValueT],
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ) -> "Observer":
+        """Registers an ``Observer`` metric instrument.
+
+        Args:
+            callback: Callback invoked each collection interval with the
+                observer as argument.
+            name: The name of the metric.
+            description: Human-readable description of the metric.
+            unit: Unit of the metric values following the UCUM convention
+                (https://unitsofmeasure.org/ucum.html).
+            value_type: The type of values being recorded by the metric.
+            label_keys: The keys for the labels with dynamic values.
+            enabled: Whether to report the metric by default.
+        Returns: A new ``Observer`` metric instrument.
         """
 
     @abc.abstractmethod
@@ -314,6 +380,18 @@ class DefaultMeter(Meter):
         # pylint: disable=no-self-use
         return DefaultMetric()
 
+    def register_observer(
+        self,
+        callback: ObserverCallbackT,
+        name: str,
+        description: str,
+        unit: str,
+        value_type: Type[ValueT],
+        label_keys: Sequence[str] = (),
+        enabled: bool = True,
+    ) -> "Observer":
+        return DefaultObserver()
+
     def get_label_set(self, labels: Dict[str, str]) -> "LabelSet":
         # pylint: disable=no-self-use
         return DefaultLabelSet()
@@ -322,45 +400,69 @@ class DefaultMeter(Meter):
 # Once https://github.com/python/mypy/issues/7092 is resolved,
 # the following type definition should be replaced with
 # from opentelemetry.util.loader import ImplementationFactory
-ImplementationFactory = Callable[[Type[Meter]], Optional[Meter]]
+ImplementationFactory = Callable[
+    [Type[MeterProvider]], Optional[MeterProvider]
+]
 
-_METER = None
-_METER_FACTORY = None
+_METER_PROVIDER = None
+_METER_PROVIDER_FACTORY = None
 
 
-def meter() -> Meter:
-    """Gets the current global :class:`~.Meter` object.
+def get_meter(
+    instrumenting_module_name: str,
+    stateful: bool = True,
+    instrumenting_library_version: str = "",
+) -> "Meter":
+    """Returns a `Meter` for use by the given instrumentation library.
+    This function is a convenience wrapper for
+    opentelemetry.metrics.meter_provider().get_meter
+    """
+    return meter_provider().get_meter(
+        instrumenting_module_name, stateful, instrumenting_library_version
+    )
+
+
+def meter_provider() -> MeterProvider:
+    """Gets the current global :class:`~.MeterProvider` object.
 
     If there isn't one set yet, a default will be loaded.
     """
-    global _METER, _METER_FACTORY  # pylint:disable=global-statement
+    global _METER_PROVIDER, _METER_PROVIDER_FACTORY  # pylint:disable=global-statement
 
-    if _METER is None:
+    if _METER_PROVIDER is None:
         # pylint:disable=protected-access
         try:
-            _METER = loader._load_impl(Meter, _METER_FACTORY)  # type: ignore
+            _METER_PROVIDER = loader._load_impl(
+                MeterProvider, _METER_PROVIDER_FACTORY  # type: ignore
+            )
         except TypeError:
             # if we raised an exception trying to instantiate an
-            # abstract class, default to no-op tracer impl
-            _METER = DefaultMeter()
-        del _METER_FACTORY
+            # abstract class, default to no-op meter impl
+            logger.warning(
+                "Unable to instantiate MeterProvider from meter provider factory.",
+                exc_info=True,
+            )
+            _METER_PROVIDER = DefaultMeterProvider()
+        _METER_PROVIDER_FACTORY = None
 
-    return _METER
+    return _METER_PROVIDER
 
 
-def set_preferred_meter_implementation(factory: ImplementationFactory) -> None:
-    """Set the factory to be used to create the meter.
+def set_preferred_meter_provider_implementation(
+    factory: ImplementationFactory,
+) -> None:
+    """Set the factory to be used to create the meter provider.
 
     See :mod:`opentelemetry.util.loader` for details.
 
     This function may not be called after a meter is already loaded.
 
     Args:
-        factory: Callback that should create a new :class:`Meter` instance.
+        factory: Callback that should create a new :class:`MeterProvider` instance.
     """
-    global _METER, _METER_FACTORY  # pylint:disable=global-statement
+    global _METER_PROVIDER_FACTORY  # pylint:disable=global-statement
 
-    if _METER:
-        raise RuntimeError("Meter already loaded.")
+    if _METER_PROVIDER:
+        raise RuntimeError("MeterProvider already loaded.")
 
-    _METER_FACTORY = factory
+    _METER_PROVIDER_FACTORY = factory
