@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1608436116657,
+  "lastUpdate": 1608436121119,
   "repoUrl": "https://github.com/toumorokoshi/opentelemetry-python",
   "entries": {
     "OpenTelemetry Python Benchmarks - Python 3.9 - core": [
@@ -158,6 +158,46 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000033408214782878375",
             "extra": "mean: 62.97258017358569 usec\nrounds: 9311"
+          }
+        ]
+      }
+    ],
+    "OpenTelemetry Python Benchmarks - Python 3.8 - core": [
+      {
+        "commit": {
+          "author": {
+            "email": "christian.neumueller@dynatrace.com",
+            "name": "Christian Neumüller",
+            "username": "Oberon00"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "753ec6c272273c5d941d43ce836e304e23c75ad0",
+          "message": "Add some repr()s to basic trace types. (#1485)",
+          "timestamp": "2020-12-18T13:52:08-08:00",
+          "tree_id": "c25d2fbcc857820fbbb75daab2da9e013843299e",
+          "url": "https://github.com/toumorokoshi/opentelemetry-python/commit/753ec6c272273c5d941d43ce836e304e23c75ad0"
+        },
+        "date": 1608436117229,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "opentelemetry-sdk/tests/performance/benchmarks/trace/test_benchmark_trace.py::test_simple_start_span",
+            "value": 23770.857355202537,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011568822893986821",
+            "extra": "mean: 42.068318574177894 usec\nrounds: 4517"
+          },
+          {
+            "name": "opentelemetry-sdk/tests/performance/benchmarks/trace/test_benchmark_trace.py::test_simple_start_as_current_span",
+            "value": 17519.978453087388,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029772376888161175",
+            "extra": "mean: 57.07769576758692 usec\nrounds: 9381"
           }
         ]
       }
