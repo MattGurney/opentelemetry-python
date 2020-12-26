@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1608962754103,
+  "lastUpdate": 1608962759659,
   "repoUrl": "https://github.com/toumorokoshi/opentelemetry-python",
   "entries": {
     "OpenTelemetry Python Benchmarks - Python 3.9 - core": [
@@ -78,6 +78,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000001468803985960444",
             "extra": "mean: 63.41484326012651 usec\nrounds: 5423"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "enowell@amazon.com",
+            "name": "(Eliseo) Nathaniel Ruiz Nowell",
+            "username": "NathanielRN"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ebd6c80c0475e1d203671a5a3807961e0eb44cf",
+          "message": "Add throughput performance tests for OTLP exporter (#1491)",
+          "timestamp": "2020-12-22T17:06:41-08:00",
+          "tree_id": "7b1127d9443b4809f6a7a1f745a4d50840ffcaf0",
+          "url": "https://github.com/toumorokoshi/opentelemetry-python/commit/8ebd6c80c0475e1d203671a5a3807961e0eb44cf"
+        },
+        "date": 1608962758754,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "opentelemetry-sdk/tests/performance/benchmarks/trace/test_benchmark_trace.py::test_simple_start_span",
+            "value": 24986.710754080785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000676359615514589",
+            "extra": "mean: 40.021274102141746 usec\nrounds: 1587"
+          },
+          {
+            "name": "opentelemetry-sdk/tests/performance/benchmarks/trace/test_benchmark_trace.py::test_simple_start_as_current_span",
+            "value": 16410.797849855684,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00000881979158176858",
+            "extra": "mean: 60.935489495947564 usec\nrounds: 7616"
           }
         ]
       }
