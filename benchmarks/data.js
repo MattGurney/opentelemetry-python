@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1608962728220,
+  "lastUpdate": 1608962736398,
   "repoUrl": "https://github.com/toumorokoshi/opentelemetry-python",
   "entries": {
     "OpenTelemetry Python Benchmarks - Python 3.9 - core": [
@@ -318,6 +318,46 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001069824818900526",
             "extra": "mean: 247.14691287510288 usec\nrounds: 7013"
+          }
+        ]
+      }
+    ],
+    "OpenTelemetry Python Benchmarks - Python 3.5 - exporter": [
+      {
+        "commit": {
+          "author": {
+            "email": "enowell@amazon.com",
+            "name": "(Eliseo) Nathaniel Ruiz Nowell",
+            "username": "NathanielRN"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ebd6c80c0475e1d203671a5a3807961e0eb44cf",
+          "message": "Add throughput performance tests for OTLP exporter (#1491)",
+          "timestamp": "2020-12-22T17:06:41-08:00",
+          "tree_id": "7b1127d9443b4809f6a7a1f745a4d50840ffcaf0",
+          "url": "https://github.com/toumorokoshi/opentelemetry-python/commit/8ebd6c80c0475e1d203671a5a3807961e0eb44cf"
+        },
+        "date": 1608962735499,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "exporter/opentelemetry-exporter-otlp/tests/performance/benchmarks/test_benchmark_trace_exporter.py::test_simple_span_processor",
+            "value": 2268.9073618650245,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001258647364695393",
+            "extra": "mean: 440.74077981659315 usec\nrounds: 109"
+          },
+          {
+            "name": "exporter/opentelemetry-exporter-otlp/tests/performance/benchmarks/test_benchmark_trace_exporter.py::test_batch_span_processor",
+            "value": 3225.5597485357334,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008782330826569848",
+            "extra": "mean: 310.02370997900664 usec\nrounds: 4279"
           }
         ]
       }
